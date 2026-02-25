@@ -123,9 +123,23 @@ subroutine get_rad(self, mol, rad, draddr)
 
    call new_adjacency_list(list, mol, trans, self%lrcut)
    allocate(brdr(3, mol%nat, mol%nat))
-
+   
    call compute_bornr(mol%nat, mol%xyz, list, &
       & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
+   
+   ! --- Minimal stabilization patch: H-only Born-radius floor ---
+   real(wp), parameter :: rmin_h = 1.20_wp  ! TODO: confirm unit (likely bohr)
+   integer :: ia
+   
+   do ia = 1, mol%nat
+      if (mol%num(ia) == 1) then
+         if (rad(ia) < rmin_h) then
+            rad(ia) = rmin_h
+            brdr(:, :, ia) = 0.0_wp
+         end if
+      end if
+   end do
+   ! ------------------------------------------------------------
 
    if (present(draddr)) then
       draddr(:, :, :) = brdr
