@@ -108,29 +108,25 @@ end subroutine new_born_integrator
 
 !> Calculate Born radii
 subroutine get_rad(self, mol, rad, draddr)
-   !> Instance of the Born integrator
    class(born_integrator), intent(in) :: self
-   !> Molecular structure data
    type(structure_type), intent(in) :: mol
-   !> Born radii
    real(wp), intent(out) :: rad(:)
-   !> Derivative of Born radii w.r.t. cartesian displacements
    real(wp), intent(out), optional :: draddr(:, :, :)
 
    type(adjacency_list) :: list
    real(wp), parameter :: trans(3, 1) = 0.0_wp
    real(wp), allocatable :: brdr(:, :, :)
 
+   integer :: ia
+   real(wp), parameter :: rmin_h = 1.20_wp  ! TODO: confirm unit (bohr/Å)
+
    call new_adjacency_list(list, mol, trans, self%lrcut)
    allocate(brdr(3, mol%nat, mol%nat))
-   
+
    call compute_bornr(mol%nat, mol%xyz, list, &
       & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
-   
-   ! --- Minimal stabilization patch: H-only Born-radius floor ---
-   real(wp), parameter :: rmin_h = 1.20_wp  ! TODO: confirm unit (likely bohr)
-   integer :: ia
-   
+
+   ! H-only Born-radius floor
    do ia = 1, mol%nat
       if (mol%num(ia) == 1) then
          if (rad(ia) < rmin_h) then
@@ -139,7 +135,6 @@ subroutine get_rad(self, mol, rad, draddr)
          end if
       end if
    end do
-   ! ------------------------------------------------------------
 
    if (present(draddr)) then
       draddr(:, :, :) = brdr
