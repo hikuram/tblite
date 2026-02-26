@@ -54,6 +54,11 @@ module tblite_solvation_born
    real(wp), parameter :: descreening_default = 0.8_wp
    real(wp), parameter :: obc_default(3) = [1.0_wp, 0.8_wp, 4.85_wp]
 
+   integer :: ia
+   real(wp), parameter :: rmin_h = 1.20_wp     ! keep your current value first
+   real(wp), parameter :: kappa  = 5.0_wp      ! start gentler than 10
+   real(wp) :: x, sig, ex
+
 contains
 
 !> Create new Born radii integrator
@@ -126,15 +131,22 @@ subroutine get_rad(self, mol, rad, draddr)
    call compute_bornr(mol%nat, mol%xyz, list, &
       & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
 
-   ! H-only Born-radius floor
+   ! --- Smooth Born-radius floor (H-only) ---
    do ia = 1, mol%nat
       if (mol%num(ia) == 1) then
-         if (rad(ia) < rmin_h) then
-            rad(ia) = rmin_h
-            brdr(:, :, ia) = 0.0_wp
-         end if
+         x = rad(ia) - rmin_h
+   
+         ! sigmoid(k*x) = 1/(1+exp(-k*x))
+         sig = 1.0_wp / (1.0_wp + exp(-kappa * x))
+   
+         ! softplus(k*x)/k = log(1+exp(k*x))/k
+         rad(ia) = rmin_h + log(1.0_wp + exp(kappa * x)) / kappa
+   
+         ! chain rule: d(rad_new)/d(rad_old) = sigmoid(k*x)
+         brdr(:, :, ia) = sig * brdr(:, :, ia)
       end if
    end do
+   ! ----------------------------------------
 
    if (present(draddr)) then
       draddr(:, :, :) = brdr
