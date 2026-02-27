@@ -43,6 +43,16 @@ module tblite_solvation_born
       real(wp) :: born_scale
       !> Volume polynome correction, default parameters correspond to GBOBCII
       real(wp) :: obc(3)
+!> Born-radius floor mode (0=off, 1=soft, 2=hard)
+integer :: floor_mode = 0
+!> Apply floor only for rad < rmin
+logical :: floor_one_sided = .true.
+!> Default smoothness parameter for soft floor
+real(wp) :: floor_kappa_default = 5.0_wp
+!> Element-wise floor radius in bohr (index: atomic number, <=0 disables)
+real(wp), allocatable :: floor_rmin(:)
+!> Element-wise smoothness parameter (index: atomic number, <=0 uses default)
+real(wp), allocatable :: floor_kappa(:)
    contains
       !> Calculate Born radii for a given geometry
       procedure :: get_rad
@@ -53,17 +63,15 @@ module tblite_solvation_born
    real(wp), parameter :: born_offset_default = 0.0_wp
    real(wp), parameter :: descreening_default = 0.8_wp
    real(wp), parameter :: obc_default(3) = [1.0_wp, 0.8_wp, 4.85_wp]
-
-   integer :: ia
-   real(wp), parameter :: rmin_h = 1.20_wp     ! keep your current value first
-   real(wp), parameter :: kappa  = 5.0_wp      ! start gentler than 10
-   real(wp) :: x, sig, ex
-
+   integer, parameter :: floor_off = 0
+   integer, parameter :: floor_soft = 1
+   integer, parameter :: floor_hard = 2
+   integer, parameter :: max_z_floor = 118
 contains
 
 !> Create new Born radii integrator
 subroutine new_born_integrator(self, mol, vdwrad, descreening, born_scale, born_offset, &
-      & obc, rcutoff)
+      & obc, rcutoff, floor_mode, floor_one_sided, floor_kappa_default, floor_rmin, floor_kappa)
    !> Instance of the Born integrator
    type(born_integrator), intent(out) :: self
    !> Molecular structure data
@@ -81,6 +89,17 @@ subroutine new_born_integrator(self, mol, vdwrad, descreening, born_scale, born_
    !> Real-space cutoff for Born radii integration
    real(wp), intent(in), optional :: rCutoff
 
+
+!> Born-radius floor mode (0=off, 1=soft, 2=hard)
+integer, intent(in), optional :: floor_mode
+!> Apply floor only for rad < rmin
+logical, intent(in), optional :: floor_one_sided
+!> Default smoothness parameter for soft floor
+real(wp), intent(in), optional :: floor_kappa_default
+!> Element-wise floor radius in bohr (index: atomic number, <=0 disables)
+real(wp), intent(in), optional :: floor_rmin(:)
+!> Element-wise smoothness parameter (index: atomic number, <=0 uses default)
+real(wp), intent(in), optional :: floor_kappa(:)
    self%lrcut = lrcut_default
    if (present(rCutoff)) then
       self%lrcut = rCutoff
@@ -109,6 +128,27 @@ subroutine new_born_integrator(self, mol, vdwrad, descreening, born_scale, born_
    else
       self%svdw = self%vdwr - born_offset_default
    end if
+
+! Floor defaults
+self%floor_mode = floor_off
+if (present(floor_mode)) self%floor_mode = floor_mode
+
+self%floor_one_sided = .true.
+if (present(floor_one_sided)) self%floor_one_sided = floor_one_sided
+
+self%floor_kappa_default = 5.0_wp
+if (present(floor_kappa_default)) self%floor_kappa_default = floor_kappa_default
+
+if (.not.allocated(self%floor_rmin)) allocate(self%floor_rmin(max_z_floor))
+if (.not.allocated(self%floor_kappa)) allocate(self%floor_kappa(max_z_floor))
+self%floor_rmin = -1.0_wp
+self%floor_kappa = -1.0_wp
+if (present(floor_rmin)) then
+   self%floor_rmin(1:min(size(floor_rmin), max_z_floor)) = floor_rmin(1:min(size(floor_rmin), max_z_floor))
+end if
+if (present(floor_kappa)) then
+   self%floor_kappa(1:min(size(floor_kappa), max_z_floor)) = floor_kappa(1:min(size(floor_kappa), max_z_floor))
+end if
 end subroutine new_born_integrator
 
 !> Calculate Born radii
@@ -123,7 +163,7 @@ subroutine get_rad(self, mol, rad, draddr)
    real(wp), allocatable :: brdr(:, :, :)
 
    integer :: ia
-   real(wp), parameter :: rmin_h = 1.20_wp  ! TODO: confirm unit (bohr/Å)
+   real(wp) :: x, t, sig, ex, kappa_use
 
    call new_adjacency_list(list, mol, trans, self%lrcut)
    allocate(brdr(3, mol%nat, mol%nat))
@@ -131,27 +171,69 @@ subroutine get_rad(self, mol, rad, draddr)
    call compute_bornr(mol%nat, mol%xyz, list, &
       & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
 
-   ! --- Smooth Born-radius floor (H-only) ---
-   do ia = 1, mol%nat
-      if (mol%num(ia) == 1) then
-         x = rad(ia) - rmin_h
-   
-         ! sigmoid(k*x) = 1/(1+exp(-k*x))
-         sig = 1.0_wp / (1.0_wp + exp(-kappa * x))
-   
-         ! softplus(k*x)/k = log(1+exp(k*x))/k
-         rad(ia) = rmin_h + log(1.0_wp + exp(kappa * x)) / kappa
-   
-         ! chain rule: d(rad_new)/d(rad_old) = sigmoid(k*x)
-         brdr(:, :, ia) = sig * brdr(:, :, ia)
-      end if
-   end do
-   ! ----------------------------------------
+call compute_bornr(mol%nat, mol%xyz, list, &
+   & self%vdwr, self%rho, self%svdw, self%born_scale, self%obc, rad, brdr)
 
-   if (present(draddr)) then
+! --- Born-radius floor (element-wise) ---
+if (self%floor_mode /= floor_off) then
+   do ia = 1, mol%nat
+      if (mol%num(ia) < 1 .or. mol%num(ia) > max_z_floor) cycle
+      if (.not.allocated(self%floor_rmin)) cycle
+      if (self%floor_rmin(mol%num(ia)) <= 0.0_wp) cycle
+      if (self%floor_one_sided) then
+         if (rad(ia) >= self%floor_rmin(mol%num(ia))) cycle
+      end if
+
+      select case(self%floor_mode)
+      case (floor_hard)
+         rad(ia) = max(rad(ia), self%floor_rmin(mol%num(ia)))
+         brdr(:, :, ia) = 0.0_wp
+      case (floor_soft)
+         ! Stable softplus floor
+         call apply_soft_floor(rad(ia), brdr(:, :, ia), self%floor_rmin(mol%num(ia)), &
+            & self%floor_kappa_default, self%floor_kappa(mol%num(ia)))
+      case default
+         ! no-op
+      end select
+   end do
+end if
+! ---------------------------------------
+
+if (present(draddr)) then
+
       draddr(:, :, :) = brdr
    end if
 end subroutine get_rad
+
+
+!> Apply numerically stable soft floor to a single Born radius and its derivative slice
+subroutine apply_soft_floor(rad, drslice, rmin, kappa_default, kappa_elem)
+   real(wp), intent(inout) :: rad
+   real(wp), intent(inout) :: drslice(:, :)
+   real(wp), intent(in) :: rmin
+   real(wp), intent(in) :: kappa_default
+   real(wp), intent(in) :: kappa_elem
+
+   real(wp) :: x, t, sig, ex, kappa_use
+
+   kappa_use = kappa_default
+   if (kappa_elem > 0.0_wp) kappa_use = kappa_elem
+
+   x = rad - rmin
+   t = kappa_use * x
+
+   if (t >= 0.0_wp) then
+      ex = exp(-t)
+      sig = 1.0_wp / (1.0_wp + ex)
+      rad = rmin + (t + log(1.0_wp + ex)) / kappa_use
+   else
+      ex = exp(t)
+      sig = ex / (1.0_wp + ex)
+      rad = rmin + log(1.0_wp + ex) / kappa_use
+   end if
+
+   drslice(:, :) = sig * drslice(:, :)
+end subroutine apply_soft_floor
 
 subroutine compute_bornr(nat, xyz, list, vdwr, rho, svdw, c1, obc, &
       & brad, brdr)

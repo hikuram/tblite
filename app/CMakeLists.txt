@@ -19,6 +19,7 @@ add_executable(
   "argument.f90"
   "cli.f90"
   "cli_help.f90"
+  "runtime_config.f90"
   "driver.f90"
   "driver_fit.f90"
   "driver_param.f90"

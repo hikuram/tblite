@@ -72,6 +72,16 @@ module tblite_solvation_alpb
       logical :: alpb = .true.
       !> Solvent for parameter selection
       character(len=:), allocatable :: solvent
+!> Born-radius floor mode (0=off, 1=soft, 2=hard)
+integer :: floor_mode = 0
+!> Apply floor only for rad < rmin
+logical :: floor_one_sided = .true.
+!> Default smoothness parameter for soft floor
+real(wp) :: floor_kappa_default = 5.0_wp
+!> Element-wise floor radius in bohr (index: atomic number, <=0 disables)
+real(wp), allocatable :: floor_rmin(:)
+!> Element-wise smoothness parameter (index: atomic number, <=0 uses default)
+real(wp), allocatable :: floor_kappa(:)
    end type alpb_input
 
    !> Provide constructor for ALPB input
@@ -199,8 +209,26 @@ subroutine new_alpb(self, mol, input, method)
       rvdw = get_vdw_rad_cosmo(mol%num)
    end if
 
+   block
+   integer, parameter :: max_z_floor = 118
+   real(wp), allocatable :: rmin(:), kappa(:)
+
+   allocate(rmin(max_z_floor), kappa(max_z_floor))
+   rmin = -1.0_wp
+   kappa = -1.0_wp
+   if (allocated(input%floor_rmin)) then
+      rmin(1:min(size(input%floor_rmin), max_z_floor)) = input%floor_rmin(1:min(size(input%floor_rmin), max_z_floor))
+   end if
+   if (allocated(input%floor_kappa)) then
+      kappa(1:min(size(input%floor_kappa), max_z_floor)) = input%floor_kappa(1:min(size(input%floor_kappa), max_z_floor))
+   end if
+
    call new_born_integrator(self%gbobc, mol, rvdw, descreening=input%descreening, &
-      & born_scale=input%born_scale, born_offset=input%born_offset)
+      & born_scale=input%born_scale, born_offset=input%born_offset, &
+      & floor_mode=input%floor_mode, floor_one_sided=input%floor_one_sided, &
+      & floor_kappa_default=input%floor_kappa_default, floor_rmin=rmin, floor_kappa=kappa)
+end block
+
 end subroutine new_alpb
 
 

@@ -111,7 +111,8 @@ module tblite_cli_help
       "      --spin <int>         Set number of unpaired electrons, overwrites .UHF file"//nl//&
       "      --method <name>      Parametrization of the xTB Hamiltonian to use"//nl//&
       "                           Available methods: gfn1, gfn2, ipea1 (Default: gfn2)"//nl//&
-      "      --param <file>       Parametrization file to use for calculation"//nl//&
+      "      --param <file>       Parametrization file to use for calculation//nl//&
+      "      --config <file>      Load defaults (method/param/solvation/floor) from a TOML file"//nl//&
       "      --acc <real>         Convergence criterion for SCF (Default: 1.0)"//nl//&
       "      --etemp <real>       Electronic temperature for calculation (Default: 300K)"//nl//&
       "      --guess <name>       Guess for the initial populations, possible options:"//nl//&

@@ -27,6 +27,7 @@ module tblite_cli
    use tblite_solvation, only : solvation_input, cpcm_input, alpb_input, &
       & cds_input, shift_input, solvent_data, get_solvent_data, solution_state, born_kernel
    use tblite_version, only : get_tblite_version
+   use tblite_runtime_config, only : load_run_defaults_from_config
    implicit none
    private
 
@@ -173,6 +174,15 @@ subroutine get_arguments(config, error)
       case("--version")
          call version(output_unit)
          stop
+case("--config")
+   iarg = iarg + 1
+   call list%get(iarg, arg)
+   if (.not.allocated(arg)) then
+      call fatal_error(error, "Missing argument for config")
+      exit
+   end if
+   call load_run_defaults_from_config(trim(arg), config%method, config%param, config%solvation, error)
+   if (allocated(error)) exit
       case default
          iarg = iarg - 1
          allocate(run_config :: config)
