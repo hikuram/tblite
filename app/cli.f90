@@ -174,15 +174,15 @@ subroutine get_arguments(config, error)
       case("--version")
          call version(output_unit)
          stop
-case("--config")
-   iarg = iarg + 1
-   call list%get(iarg, arg)
-   if (.not.allocated(arg)) then
-      call fatal_error(error, "Missing argument for config")
-      exit
-   end if
-   call load_run_defaults_from_config(trim(arg), config%method, config%param, config%solvation, error)
-   if (allocated(error)) exit
+      case("--config")
+         iarg = iarg + 1
+         call list%get(iarg, arg)
+         if (.not.allocated(arg)) then
+            call fatal_error(error, "Missing argument for config")
+            exit
+         end if
+         call load_run_defaults_from_config(trim(arg), config%method, config%param, config%solvation, error)
+         if (allocated(error)) exit
       case default
          iarg = iarg - 1
          allocate(run_config :: config)
