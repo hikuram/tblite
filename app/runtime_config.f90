@@ -23,7 +23,7 @@ subroutine load_run_defaults_from_config(filename, method, param, solvation, err
    type(solvation_input), allocatable, intent(inout) :: solvation
    type(error_type), allocatable, intent(out) :: error
 
-   type(toml_table) :: root
+   type(toml_table), allocatable :: root
    type(toml_error), allocatable :: terr
    type(toml_table), pointer :: t_method, t_solv, t_floor
    character(len=:), allocatable :: s
@@ -37,9 +37,11 @@ subroutine load_run_defaults_from_config(filename, method, param, solvation, err
    integer :: i, n
    character(len=:), allocatable :: sym
 
-   call toml_parse(root, filename, terr)
+   open(file=filename, newunit=i, status='old', action='read')
+   call toml_parse(root, i, terr)
+   close(i)
    if (allocated(terr)) then
-      call fatal_error(error, "Failed to parse config file '"//trim(filename)//"'")
+      call fatal_error(error, "Failed to parse config file '"//trim(filename)//"': "//trim(terr%message))
       return
    end if
 
@@ -192,7 +194,7 @@ subroutine load_run_defaults_from_config(filename, method, param, solvation, err
 end subroutine load_run_defaults_from_config
 
 function get_real_from_array(arr, idx, error) result(val)
-   type(toml_array), intent(in) :: arr
+   type(toml_array), intent(inout) :: arr
    integer, intent(in) :: idx
    type(error_type), allocatable, intent(out) :: error
    real(wp) :: val
