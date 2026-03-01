@@ -202,6 +202,11 @@ class TBLite(ase.calculators.calculator.Calculator):
         "electronic_temperature": 300.0,
         "cache_api": True,
         "verbosity": 1,
+        "born_floor_mode": 0,
+        "born_floor_one_sided": True,
+        "born_floor_kappa_default": 5.0,
+        "born_floor_rmin": None,
+        "born_floor_kappa": None,
     }
 
     _res = None
@@ -421,13 +426,44 @@ def _create_api_calculator(
             )
         if parameters.spin_polarization is not None:
             calc.add("spin-polarization", parameters.spin_polarization)
+            
         if parameters.solvation is not None:
             solvation_model, *solvation_args = parameters.solvation
+    
+            kwargs = {}
+            if parameters.get("born_floor_mode", 0) > 0 and parameters.get("born_floor_rmin", None):
+                import numpy as np
+                from .interface import SYMBOL_TO_NUMBER
+    
+                mode = parameters.get("born_floor_mode")
+                one_sided = parameters.get("born_floor_one_sided", True)
+                kappa_def = parameters.get("born_floor_kappa_default", 5.0)
+    
+                rmin_dict = parameters.get("born_floor_rmin")
+                kappa_dict = parameters.get("born_floor_kappa", None) or {}
+    
+                elems, rmins, kappas = [], [], []
+                for k, v in rmin_dict.items():
+                    num = SYMBOL_TO_NUMBER.get(k, k) if isinstance(k, str) else k
+                    elems.append(num)
+                    rmins.append(v)
+                    kappas.append(kappa_dict.get(k, kappa_dict.get(num, -1.0)))
+    
+                # Pack floor arguments as a dictionary for interface.py
+                kwargs["born_floor_args"] = {
+                    "mode": mode,
+                    "one_sided": one_sided,
+                    "kappa_def": kappa_def,
+                    "elems": np.array(elems, dtype=np.int32),
+                    "rmin": np.array(rmins, dtype=np.float64),
+                    "kappa": np.array(kappas, dtype=np.float64),
+                }
+    
             if isinstance(solvation_args, (tuple, list)):
-                calc.add(f"{solvation_model}-solvation", *solvation_args)
+                calc.add(f"{solvation_model}-solvation", *solvation_args, **kwargs)
             else:
-                calc.add(f"{solvation_model}-solvation", solvation_args)
-
+                calc.add(f"{solvation_model}-solvation", solvation_args, **kwargs)
+                
     except RuntimeError as e:
         raise ase.calculators.calculator.InputError(str(e)) from e
 
@@ -482,7 +518,6 @@ def _update_parameters(kwargs: Dict[str, Any]) -> None:
                     "Multiple solvation models provided, can only use one"
                 )
             kwargs["solvation"] = value
-
 
 if "tblite" not in ase.calculators.calculator.external_calculators:
     ase.calculators.calculator.register_calculator_class("tblite", TBLite)

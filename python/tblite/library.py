@@ -560,6 +560,25 @@ def new_alpb_solvation(
     )
 
 
+def new_alpb_solvation_with_floor(
+    ctx, mol, calc, solvent: str, state: str, version: int,
+    mode: int, one_sided: bool, kappa_def: float, elems: np.ndarray, rmin: np.ndarray, kappa: np.ndarray
+):
+    """Create new tblite ALPB solvation object with custom Born floor parameters"""
+    _solvent = ffi.new("char[]", solvent.encode("ascii"))
+    _version = 10 + version
+    
+    _nelem = len(elems)
+    _elems = ffi.cast("int*", np.ascontiguousarray(elems, dtype=np.int32).ctypes.data)
+    _rmin = ffi.cast("double*", np.ascontiguousarray(rmin, dtype=np.float64).ctypes.data)
+    _kappa = ffi.cast("double*", np.ascontiguousarray(kappa, dtype=np.float64).ctypes.data)
+
+    return error_check(lib.tblite_new_alpb_solvation_solvent_with_floor)(
+        mol, _solvent, _version, _state_enum[state],
+        mode, int(one_sided), float(kappa_def), _nelem, _elems, _rmin, _kappa
+    )
+
+
 def new_gbsa_solvation(
     ctx, mol, calc, solvent: str, state: str = "gsolv", *, version: int
 ):

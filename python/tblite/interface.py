@@ -570,7 +570,7 @@ class Calculator(Structure):
             )
         self._setter[attribute](self._ctx, self._calc, value)
 
-    def add(self, interaction, *args) -> None:
+    def add(self, interaction, *args, **kwargs) -> None:
         """
         Add an interaction to the calculator instance. Supported interactions are
 
@@ -593,19 +593,30 @@ class Calculator(Structure):
             For unnamed solvents (dielectric constant), uses non-empirical GBSA/ALPB.
             Optional solution state correction: gsolv (default), bar1mol, reference.
         """
+        born_floor_args = kwargs.pop("born_floor_args", None)
 
         if interaction in self._interaction:
-            kwargs = {}
             if interaction in ("alpb-solvation", "gbsa-solvation"):
                 kwargs["version"] = {
                     "GFN2-xTB": 2,
                     "IPEA1-xTB": 1,
                     "GFN1-xTB": 1,
                 }[self._method]
-            cont = self._interaction[interaction](
-                self._ctx, self._mol, self._calc, *args, **kwargs
-            )
+            
+            # Use the new API constructor if floor arguments are provided
+            if born_floor_args is not None and interaction == "alpb-solvation":
+                state_val = args[1] if len(args) > 1 else kwargs.get("state", "gsolv")
+                cont = library.new_alpb_solvation_with_floor(
+                    self._ctx, self._mol, self._calc, args[0], state_val, kwargs["version"], **born_floor_args
+                )
+            else:
+                # Use standard container generation
+                cont = self._interaction[interaction](
+                    self._ctx, self._mol, self._calc, *args, **kwargs
+                )
+
             library.calculator_push_back(self._ctx, self._calc, cont)
+            
         elif interaction in self._post_processing:
             library.post_processing_push_back(
                 self._ctx, self._calc, self._post_processing[interaction]

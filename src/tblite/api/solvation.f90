@@ -13,10 +13,8 @@
 !
 ! You should have received a copy of the GNU Lesser General Public License
 ! along with tblite.  If not, see <https://www.gnu.org/licenses/>.
-
 !> @file tblite/api/container.f90
 !> Provides API exports for the #tblite_container handle.
-
 !> API export for managing interaction containers
 module tblite_api_solvation
    use, intrinsic :: iso_c_binding
@@ -39,7 +37,7 @@ module tblite_api_solvation
    private
 
    public :: new_gb_solvation_epsilon_api, new_alpb_solvation_solvent_api, &
-      & new_cpcm_solvation_epsilon_api
+      & new_cpcm_solvation_epsilon_api, new_alpb_solvation_solvent_with_floor_api
 
    enum, bind(c)
       enumerator :: &
@@ -51,11 +49,9 @@ module tblite_api_solvation
          solvation_gbsa_gfn2 = 22
    end enum
 
-
    logical, parameter :: debug = .false.
 
 contains
-
 
 function new_cpcm_solvation_epsilon_api(verr, vmol, eps) result(vcont) &
    & bind(C, name=namespace//"new_cpcm_solvation_epsilon")
@@ -131,6 +127,7 @@ function new_gb_solvation_epsilon_api(verr, vmol, eps, version, born_type) resul
    end select
 
    solvmodel%alpb = alpb_input(eps, alpb=alpb, kernel=born_type)
+
    call new_solvation(solv, mol%ptr, solvmodel, err%ptr)
    if (allocated(err%ptr)) return
    
@@ -143,7 +140,7 @@ end function new_gb_solvation_epsilon_api
 function new_alpb_solvation_solvent_api(verr, vmol, csolvstr, version, crefstate) result(vcont) &
    & bind(C, name=namespace//"new_alpb_solvation_solvent")
    type(c_ptr), value :: verr
-      type(vp_error), pointer :: err
+   type(vp_error), pointer :: err
    type(c_ptr), value :: vmol
    type(vp_structure), pointer :: mol
    type(c_ptr) :: vcont
@@ -222,5 +219,114 @@ function new_alpb_solvation_solvent_api(verr, vmol, csolvstr, version, crefstate
 
    vcont = c_loc(cont)
 end function new_alpb_solvation_solvent_api
+
+! Create new ALPB solvation object with custom Born floor parameters
+function new_alpb_solvation_solvent_with_floor_api(verr, vmol, csolvstr, version, crefstate, &
+      & mode, one_sided, kappa_def, n, elems, rmin, kappa) result(vcont) &
+   & bind(C, name=namespace//"new_alpb_solvation_solvent_with_floor")
+   type(c_ptr), value :: verr
+   type(vp_error), pointer :: err
+   type(c_ptr), value :: vmol
+   type(vp_structure), pointer :: mol
+   type(c_ptr) :: vcont
+   character(kind=c_char), intent(in) :: csolvstr(*)
+   integer(c_int), value :: version
+   integer(c_int), value :: crefstate
+   integer(c_int), value :: mode
+   integer(c_int), value :: one_sided
+   real(c_double), value :: kappa_def
+   integer(c_int), value :: n
+   integer(c_int), intent(in) :: elems(n)
+   real(c_double), intent(in) :: rmin(n)
+   real(c_double), intent(in) :: kappa(n)
+
+   type(vp_container), pointer :: cont
+   type(solvation_input) :: solvmodel
+   type(solvent_data) :: solvent
+   character(len=:), allocatable :: solvstr, method
+   integer :: kernel, sol_state, i, z
+   logical :: alpb
+
+   class(container_list), allocatable :: list
+   class(container_type), allocatable :: tmp_cont
+   class(solvation_type), allocatable :: solv, cds, shift
+
+   if (debug) print '("[Info]", 1x, a)', "new_alpb_solvation_solvent_with_floor"
+   vcont = c_null_ptr
+
+   if (.not.c_associated(verr)) return
+   call c_f_pointer(verr, err)
+
+   if (.not.c_associated(vmol)) then
+      call fatal_error(err%ptr, "Molecular structure data is missing")
+      return
+   end if
+   call c_f_pointer(vmol, mol)
+
+   call c_f_character(csolvstr, solvstr)
+   solvent = get_solvent_data(solvstr)
+   if (solvent%eps <= 0.0_wp) then
+      call fatal_error(err%ptr, "String value for epsilon was not found among database of solvents")
+      return
+   end if
+
+   select case(version)
+   case(solvation_alpb_gfn1, solvation_alpb_gfn2)
+      method = merge("gfn2", "gfn1", version == solvation_alpb_gfn2)
+      kernel = born_kernel%p16
+      alpb = .true.
+   case(solvation_gbsa_gfn1, solvation_gbsa_gfn2)
+      method = merge("gfn2", "gfn1", version == solvation_gbsa_gfn2)
+      kernel = born_kernel%still
+      alpb = .false.
+   case default
+      call fatal_error(err%ptr, "Unknown value for model version")
+      return
+   end select
+
+   sol_state = int(crefstate)
+
+   solvmodel%alpb = alpb_input(solvent%eps, solvent=solvent%solvent, kernel=kernel, alpb=alpb)
+
+   ! Map the provided arrays to the floor parameters
+   solvmodel%alpb%floor_mode = int(mode)
+   solvmodel%alpb%floor_one_sided = (one_sided /= 0)
+   solvmodel%alpb%floor_kappa_default = real(kappa_def, wp)
+   allocate(solvmodel%alpb%floor_rmin(118), solvmodel%alpb%floor_kappa(118))
+   solvmodel%alpb%floor_rmin = -1.0_wp
+   solvmodel%alpb%floor_kappa = -1.0_wp
+   
+   do i = 1, n
+      z = elems(i)
+      if (z > 0 .and. z <= 118) then
+         solvmodel%alpb%floor_rmin(z) = real(rmin(i), wp)
+         solvmodel%alpb%floor_kappa(z) = real(kappa(i), wp)
+      end if
+   end do
+
+   solvmodel%cds = cds_input(alpb=alpb, solvent=solvent%solvent)
+   solvmodel%shift = shift_input(alpb=alpb, solvent=solvent%solvent, state=sol_state)
+
+   allocate(list)
+   call new_solvation(solv, mol%ptr, solvmodel, err%ptr, method)
+   if (allocated(err%ptr)) return
+   call move_alloc(solv, tmp_cont)
+   call list%push_back(tmp_cont)
+   
+   call new_solvation_cds(cds, mol%ptr, solvmodel, err%ptr, method)
+   if (allocated(err%ptr)) return
+   call move_alloc(cds, tmp_cont)
+   call list%push_back(tmp_cont)
+
+   call new_solvation_shift(shift, solvmodel, err%ptr, method)
+   if (allocated(err%ptr)) return
+   call move_alloc(shift, tmp_cont)
+   call list%push_back(tmp_cont)
+
+   allocate(cont)
+   call move_alloc(list, cont%ptr)
+
+   vcont = c_loc(cont)
+end function new_alpb_solvation_solvent_with_floor_api
 
 end module tblite_api_solvation
