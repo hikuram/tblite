@@ -93,6 +93,6 @@ tblite_new_alpb_solvation_solvent(tblite_error error,
 /* Create new tblite ALPB solvation object with custom Born floor parameters */
 TBLITE_API_ENTRY tblite_container TBLITE_API_CALL
 tblite_new_alpb_solvation_solvent_with_floor(
-    tblite_error* err, tblite_structure mol, const char* solvent, int version, int state,
+    tblite_error err, tblite_structure mol, const char* solvent, int version, int state,
     int mode, int one_sided, double kappa_def, int n, const int* elems, const double* rmin, const double* kappa
 );
