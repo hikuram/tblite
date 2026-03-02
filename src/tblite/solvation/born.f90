@@ -343,9 +343,9 @@ pure subroutine compute_psi(nat, xyz, list, vdwr, rho, psi, dpsidr)
 
          else if (ijov .and. .not.jiov) then
 
+            r1 = 1.0_wp/r
             if((r+rhoj) > rvdwi) then
                ! ij contribution
-               r1 = 1.0_wp/r
                r12 = 0.5_wp*r1
                r24 = r12*r12
 
